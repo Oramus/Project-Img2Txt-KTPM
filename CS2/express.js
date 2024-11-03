@@ -5,9 +5,20 @@ const path = require('path');
 const fs = require('fs');
 const { processImages } = require('./utils/services'); // Import services
 const logger = require('./utils/logger');
+const rateLimit = require('express-rate-limit'); // Import express-rate-limit
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
+
+// Thiết lập giới hạn tần suất
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 phút
+  max: 100, // Giới hạn mỗi IP 100 yêu cầu mỗi cửa sổ
+  message: 'Bạn đã gửi quá nhiều yêu cầu, vui lòng thử lại sau vài phút.',
+});
+
+// Áp dụng middleware limiter cho tất cả các yêu cầu
+app.use(limiter);
 
 // Tạo thư mục output nếu chưa tồn tại
 if (!fs.existsSync('./output')) {
