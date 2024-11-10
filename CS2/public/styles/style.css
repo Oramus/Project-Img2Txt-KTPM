@@ -1,0 +1,116 @@
+/* public/styles/style.css */
+
+/* Reset default margins and padding for all elements */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Set the body to a gradient background */
+body {
+    font-family: 'Arial', sans-serif;
+    background: linear-gradient(to right, #ff7e5f, #feb47b);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #fff;
+    text-align: center;
+}
+
+/* Container for the form */
+.container {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 15px;
+    padding: 30px;
+    width: 80%;
+    max-width: 600px;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* Main title */
+h1 {
+    font-size: 28px;
+    margin-bottom: 20px;
+    color: #333;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+/* Style the file input to make it bigger and easier to use */
+input[type="file"] {
+    padding: 15px;
+    font-size: 18px;
+    background-color: #ff6f61;
+    border: 2px solid #e24e45;
+    border-radius: 8px;
+    color: white;
+    width: 100%;
+    margin-top: 20px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+/* Hover effect for the file input */
+input[type="file"]:hover {
+    background-color: #e24e45;
+}
+
+/* Style the button with modern colors and effects */
+button {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 15px 25px;
+    font-size: 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    width: 100%;
+    margin-top: 20px;
+}
+
+/* Hover effect for the button */
+button:hover {
+    background-color: #218838;
+}
+
+/* PDF links styling */
+.pdf-links {
+    margin-top: 30px;
+}
+
+.pdf-links a {
+    display: inline-block;
+    background-color: #007bff;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 18px;
+    margin: 10px 0;
+    transition: background-color 0.3s ease;
+}
+
+/* Hover effect for PDF download links */
+.pdf-links a:hover {
+    background-color: #0056b3;
+}
+
+/* Add a transition effect for the container */
+.container {
+    animation: fadeIn 0.8s ease-in-out;
+}
+
+/* Keyframes for fade-in effect */
+@keyframes fadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
