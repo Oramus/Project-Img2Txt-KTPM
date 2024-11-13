@@ -3,66 +3,76 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { processImages } = require('./utils/services'); // Import services
+const serviceManager = require('./utils/services');
 const logger = require('./utils/logger');
-const rateLimit = require('express-rate-limit'); // Import express-rate-limit
+const RateLimiter = require('./patterns/rateLimiter');
+
+const { errorHandler } = require('./filters');
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-// Thiết lập giới hạn tần suất
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 phút
-  max: 100, // Giới hạn mỗi IP 100 yêu cầu mỗi cửa sổ
-  message: 'Bạn đã gửi quá nhiều yêu cầu, vui lòng thử lại sau vài phút.',
+// Initialize rate limiter with custom options
+const rateLimiter = new RateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: 'Bạn đã gửi quá nhiều yêu cầu, vui lòng thử lại sau vài phút.'
 });
 
-// Áp dụng middleware limiter cho tất cả các yêu cầu
-app.use(limiter);
+// Apply rate limiter middleware
+app.use(rateLimiter.getInstance());
 
-// Tạo thư mục output nếu chưa tồn tại
+// Ensure output directory exists
 if (!fs.existsSync('./output')) {
-  fs.mkdirSync('./output');
+    fs.mkdirSync('./output');
 }
 
-// Middleware phục vụ các file tĩnh
+// Static file middleware
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static('uploads'));
 
-// Route trang chủ
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Route tải lên tệp và xử lý
-app.post('/upload', upload.array('images', 10), async (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0) {
-      logger.error('No files uploaded.');
-      return res.status(400).send('No files uploaded.');
-    }
-
-    const imagePaths = req.files.map(file => file.path);
-    const pdfPaths = await processImages(imagePaths); // Gọi đến processImages
-
-    res.json({
-      success: true,
-      pdfPaths,
-    });
-  } catch (e) {
-    logger.error('Unexpected error:', e.message);
-    res.status(500).send('An unexpected error occurred.');
-  }
-});
-
-// Route tải xuống file PDF sau khi đã xử lý
-app.get('/download/:pdfName', (req, res) => {
-  const pdfName = req.params.pdfName;
-  const pdfPath = path.join(__dirname, 'output', pdfName);
-  res.download(pdfPath);
-});
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+    logger.info(`Server running on http://localhost:${PORT}`);
+});
+
+// Home route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Upload route with enhanced error handling
+app.post('/upload', upload.array('images', 10), async (req, res) => {
+    try {
+        if (!req.files?.length) {
+            logger.error('No files uploaded.');
+            return res.status(400).send('No files uploaded.');
+        }
+
+        const imagePaths = req.files.map(file => file.path);
+        const pdfPaths = await serviceManager.processImages(imagePaths);
+
+        res.json({
+            success: true,
+            pdfPaths,
+        });
+    } catch (error) {
+        logger.error('Upload processing error:', error.message);
+        res.status(500).send('An unexpected error occurred while processing the upload.');
+    }
+});
+
+// Download route
+app.get('/download/:pdfName', (req, res) => {
+    const pdfPath = path.join(__dirname, 'output', req.params.pdfName);
+    res.download(pdfPath, (error) => {
+        if (error) {
+            logger.error(`Download error for file ${req.params.pdfName}:`, error);
+            if (!res.headersSent) {
+                res.status(404).send('File not found');
+            }
+        }
+    });
 });
