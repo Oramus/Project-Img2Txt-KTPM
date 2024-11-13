@@ -1,32 +1,52 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Images & Download PDFs</title>
-    <link rel="stylesheet" href="/styles/style.css">
+    <title>Upload Multiple Images and Download PDFs</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        .container {
+            width: 50%;
+            margin: 0 auto;
+        }
+        .pdf-links {
+            margin-top: 20px;
+        }
+        .pdf-links a {
+            display: block;
+            margin-bottom: 10px;
+            color: blue;
+            text-decoration: underline;
+        }
+    </style>
 </head>
-
 <body>
     <div class="container">
         <h1>Upload Images for OCR and PDF Conversion</h1>
         <form id="uploadForm" enctype="multipart/form-data">
-            <label for="imageInput" class="file-label">Select Images</label>
             <input type="file" id="imageInput" name="images" accept="image/*" multiple required>
-            <button type="submit" class="upload-btn">Upload Images</button>
+            <br><br>
+            <button type="submit">Upload Images</button>
         </form>
-        <div class="pdf-links" id="pdfLinks"></div>
+        <br>
+        <div class="pdf-links" id="pdfLinks">
+            <!-- Nút download cho mỗi file PDF sẽ được thêm ở đây sau khi upload -->
+        </div>
     </div>
 
     <script>
         document.getElementById('uploadForm').addEventListener('submit', async function (e) {
             e.preventDefault();
-
+            
             const formData = new FormData();
             const imageFiles = document.getElementById('imageInput').files;
-
-            // Append images to the form data
+            
+            // Thêm nhiều ảnh vào form
             for (let i = 0; i < imageFiles.length; i++) {
                 formData.append('images', imageFiles[i]);
             }
@@ -38,15 +58,14 @@
 
             const result = await response.json();
             const pdfLinksDiv = document.getElementById('pdfLinks');
-            pdfLinksDiv.innerHTML = '';  // Clear old links
+            pdfLinksDiv.innerHTML = '';  // Xóa các link cũ
 
             if (result.success) {
-                // Create download links for each PDF file
+                // Tạo các link download cho từng file PDF
                 result.pdfPaths.forEach((pdfPath, index) => {
                     const link = document.createElement('a');
                     link.href = pdfPath;
                     link.textContent = `Download PDF ${index + 1}`;
-                    link.target = "_blank";
                     pdfLinksDiv.appendChild(link);
                 });
             } else {
@@ -55,5 +74,4 @@
         });
     </script>
 </body>
-
 </html>
