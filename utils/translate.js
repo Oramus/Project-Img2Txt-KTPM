@@ -1,8 +1,4 @@
-// utils/translate.js
-
 const translator = require("open-google-translator");
-
-translator.supportedLanguages();
 
 function translate(text) {
     return new Promise((resolve, reject) => {
@@ -15,11 +11,11 @@ function translate(text) {
             .then((data) => {
                 resolve(data[0].translation);
             }).catch((err) => {
-                reject(err)
+                reject(err);
             });
     });
 }
 
 module.exports = {
     translate
-}
+};
