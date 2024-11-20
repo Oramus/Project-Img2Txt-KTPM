@@ -1,22 +1,16 @@
 {
-  "name": "cs2",
+  "name": "cs2-1---copy",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "rabbitmq.js",
   "scripts": {
-    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "amqplib": "^0.10.4",
-    "bull": "^4.16.4",
-    "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1",
-    "node-tesseract-ocr": "^2.2.1",
-    "open-google-translator": "^1.0.5",
-    "pdfkit": "^0.15.1",
-    "redis": "^4.7.0"
+    "fs": "^0.0.1-security"
   }
 }
