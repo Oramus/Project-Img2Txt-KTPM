@@ -1,65 +1,55 @@
-const amqp = require('amqplib');
-const PDFDocument = require('pdfkit');
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { connect, sendToQueue } = require('../rabbitmq');
+const puppeteer = require('puppeteer'); // Import puppeteer
+
+const app = express();
+app.use(express.json());
 
 const outputDir = './output';
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
 
-function createPDF(text, pdfFilename) {
-  const doc = new PDFDocument();
+app.post('/generate-pdf', async (req, res) => {
+  const { text } = req.body;
+  const pdfFilename = `output-${Date.now()}.pdf`;
   const pdfPath = path.join(outputDir, pdfFilename);
-  doc.pipe(fs.createWriteStream(pdfPath));
-  doc.font('font/Roboto-Regular.ttf').fontSize(14).text(text, 100, 100);
-  doc.end();
-  return pdfFilename;
-}
 
-let channel;
-
-async function consumePDFQueue() {
   try {
-    console.log('Starting consumePDFQueue...');
-    console.log('Connecting to RabbitMQ...');
-    
-    // Kết nối đến RabbitMQ
-    const connection = await amqp.connect('amqp://localhost');
-    console.log('Connected to RabbitMQ successfully.');
-    
-    // Tạo một kênh mới
-    channel = await connection.createChannel();
-    console.log('Channel created.');
-    
-    // Đảm bảo hàng đợi 'pdf_queue' đã được khai báo
-    await channel.assertQueue('pdf_queue', { durable: true });
-    console.log('Queue "pdf_queue" asserted.');
+    // Mở trình duyệt headless với Puppeteer
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
 
-    // Lắng nghe các tin nhắn từ hàng đợi 'pdf_queue'
-    channel.consume('pdf_queue', (msg) => {
-      if (msg !== null) {
-        const { translatedText, imagePath } = JSON.parse(msg.content.toString());
-        console.log(`Creating PDF for: ${translatedText}`);
-    
-        // Tạo PDF từ văn bản dịch
-        const pdfFilename = `output-${Date.now()}.pdf`;
-        createPDF(translatedText, pdfFilename);
-    
-        console.log(`PDF created: ${pdfFilename}`);
-    
-        // Gửi tên file PDF vào hàng đợi 'pdf-result-queue'
-        sendToQueue('pdf-result-queue', JSON.stringify({ pdfFilename, imagePath }));
-    
-        // Xác nhận tin nhắn đã được xử lý
-        channel.ack(msg);
-      }
-    });
-    
+    // Tạo HTML đơn giản từ văn bản
+    const content = `
+      <html>
+        <body>
+          <div style="font-family: Arial, sans-serif; font-size: 14px;">
+            <p>${text}</p>
+          </div>
+        </body>
+      </html>
+    `;
+    await page.setContent(content);
+
+    // Tạo PDF từ HTML
+    const pdfBuffer = await page.pdf();
+
+    await browser.close();
+
+    // Trả về PDF như là một stream mà không cần ghi vào đĩa
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${pdfFilename}`);
+    res.send(pdfBuffer);
+
+    console.log(`PDF created: ${pdfFilename}`);
   } catch (error) {
-    console.error('Error in consumePDFQueue:', error);
+    console.error('Error creating PDF:', error);
+    res.status(500).json({ error: 'PDF generation failed' });
   }
-}
+});
 
-consumePDFQueue().catch(console.error);
+app.listen(4002, () => {
+  console.log('PDF service running at http://localhost:4002');
+});
