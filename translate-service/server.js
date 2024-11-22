@@ -1,28 +1,67 @@
-const express = require('express');
-const translator = require('open-google-translator');
+// translate-service/server.js
+const amqp = require('amqplib');
+const { connect, sendToQueue } = require('../rabbitmq');
+const translator = require("open-google-translator");
 
-const app = express();
-app.use(express.json()); // Hỗ trợ body JSON
+let channel;
 
-app.post('/translate', async (req, res) => {
-  const { text } = req.body;
+async function translate(text) {
+  return new Promise((resolve, reject) => {
+    translator
+      .TranslateLanguageData({
+        listOfWordsToTranslate: [text],
+        fromLanguage: "en",
+        toLanguage: "vi",
+      })
+      .then((data) => {
+        resolve(data[0].translation);
+      }).catch((err) => {
+        reject(err);
+      });
+  });
+}
 
+async function consumeTranslateQueue() {
   try {
-    console.log(`Translating text: ${text}`);
-    const translated = await translator.TranslateLanguageData({
-      listOfWordsToTranslate: [text],
-      fromLanguage: 'en',
-      toLanguage: 'vi',
+    console.log('Starting consumeTranslateQueue...');
+    console.log('Connecting to RabbitMQ...');
+    
+    // Kết nối với RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    console.log('Connected to RabbitMQ successfully.');
+    
+    // Tạo một kênh để giao tiếp với RabbitMQ
+    channel = await connection.createChannel();
+    console.log('Channel created.');
+    
+    // Đảm bảo rằng hàng đợi 'translation_queue' đã được khai báo
+    await channel.assertQueue('translation_queue', { durable: true });
+    console.log('Queue "translation_queue" asserted.');
+    
+    // Lắng nghe các tin nhắn từ 'translation_queue'
+    channel.consume('translation_queue', async (msg) => {
+      if (msg !== null) {
+        const { text, imagePath } = JSON.parse(msg.content.toString());
+        console.log(`Received text to translate: ${text}`);
+        
+        try {
+          // Dịch văn bản
+          const translatedText = await translate(text);
+          console.log(`Translated text: ${translatedText}`);
+          
+          // Gửi kết quả dịch vào hàng đợi PDF
+          sendToQueue('pdf_queue', JSON.stringify({ translatedText, imagePath }));
+          
+          // Xác nhận tin nhắn đã được xử lý
+          channel.ack(msg);
+        } catch (error) {
+          console.error(`Error translating text: ${error}`);
+        }
+      }
     });
-    const translatedText = translated[0].translation;
-    console.log(`Translated text: ${translatedText}`);
-    res.json({ translatedText });
   } catch (error) {
-    console.error('Error during translation:', error);
-    res.status(500).json({ error: 'Translation failed' });
+    console.error('Error in consumeTranslateQueue:', error);
   }
-});
+}
 
-app.listen(4001, () => {
-  console.log('Translation service running at http://localhost:4001');
-});
+consumeTranslateQueue();
