@@ -11,6 +11,12 @@
   "description": "",
   "dependencies": {
     "amqplib": "^0.10.4",
-    "fs": "^0.0.1-security"
+    "bull": "^4.16.4",
+    "express": "^4.21.1",
+    "fs": "^0.0.1-security",
+    "multer": "^1.4.5-lts.1",
+    "node-tesseract-ocr": "^2.2.1",
+    "open-google-translator": "^1.0.5",
+    "pdfkit": "^0.15.1"
   }
 }
