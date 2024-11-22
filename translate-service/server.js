@@ -1,9 +1,7 @@
 // translate-service/server.js
 const amqp = require('amqplib');
-const { connect, sendToQueue } = require('../rabbitmq');
 const translator = require("open-google-translator");
-
-let channel;
+const NUM_CONSUMERS = 3;
 
 async function translate(text) {
   return new Promise((resolve, reject) => {
@@ -13,55 +11,55 @@ async function translate(text) {
         fromLanguage: "en",
         toLanguage: "vi",
       })
-      .then((data) => {
-        resolve(data[0].translation);
-      }).catch((err) => {
-        reject(err);
-      });
+      .then((data) => resolve(data[0].translation))
+      .catch((err) => reject(err));
   });
 }
 
-async function consumeTranslateQueue() {
-  try {
-    console.log('Starting consumeTranslateQueue...');
-    console.log('Connecting to RabbitMQ...');
-    
-    // Kết nối với RabbitMQ
-    const connection = await amqp.connect('amqp://localhost');
-    console.log('Connected to RabbitMQ successfully.');
-    
-    // Tạo một kênh để giao tiếp với RabbitMQ
-    channel = await connection.createChannel();
-    console.log('Channel created.');
-    
-    // Đảm bảo rằng hàng đợi 'translation_queue' đã được khai báo
-    await channel.assertQueue('translation_queue', { durable: true });
-    console.log('Queue "translation_queue" asserted.');
-    
-    // Lắng nghe các tin nhắn từ 'translation_queue'
-    channel.consume('translation_queue', async (msg) => {
-      if (msg !== null) {
+async function createTranslateConsumer(connection) {
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('translation_queue', { durable: true });
+  await channel.assertQueue('pdf_queue', { durable: true });
+
+  channel.consume('translation_queue', async (msg) => {
+    if (msg !== null) {
+      try {
         const { text, imagePath } = JSON.parse(msg.content.toString());
-        console.log(`Received text to translate: ${text}`);
-        
-        try {
-          // Dịch văn bản
-          const translatedText = await translate(text);
-          console.log(`Translated text: ${translatedText}`);
-          
-          // Gửi kết quả dịch vào hàng đợi PDF
-          sendToQueue('pdf_queue', JSON.stringify({ translatedText, imagePath }));
-          
-          // Xác nhận tin nhắn đã được xử lý
-          channel.ack(msg);
-        } catch (error) {
-          console.error(`Error translating text: ${error}`);
-        }
+        const translatedText = await translate(text);
+
+        channel.sendToQueue('pdf_queue', Buffer.from(JSON.stringify({ 
+          translatedText, 
+          imagePath 
+        })), { persistent: true });
+
+        channel.ack(msg);
+      } catch (error) {
+        console.error(`Translation error: ${error}`);
+        channel.nack(msg, false, false);
       }
-    });
+    }
+  }, { 
+    consumerTag: `translate-consumer-${Math.random().toString(36).substr(2, 9)}` 
+  });
+}
+
+async function startTranslateCompetingConsumers() {
+  try {
+    const connection = await amqp.connect('amqp://localhost');
+    console.log("Starting Competing Consumers for Translation Service...");
+
+    const consumers = [];
+    for (let i = 0; i < NUM_CONSUMERS; i++) {
+      consumers.push(createTranslateConsumer(connection));
+    }
+
+    await Promise.all(consumers);
+    console.log(`Started ${NUM_CONSUMERS} competing translation consumers`);
+
   } catch (error) {
-    console.error('Error in consumeTranslateQueue:', error);
+    console.error('Error in startTranslateCompetingConsumers:', error);
   }
 }
 
-consumeTranslateQueue();
+startTranslateCompetingConsumers().catch(console.error);

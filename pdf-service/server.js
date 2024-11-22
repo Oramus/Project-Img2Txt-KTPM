@@ -3,9 +3,10 @@ const amqp = require('amqplib');
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
-const { connect, sendToQueue } = require('../rabbitmq');
 
 const outputDir = './output';
+const NUM_CONSUMERS = 3;
+
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
@@ -19,48 +20,52 @@ function createPDF(text, pdfFilename) {
   return pdfFilename;
 }
 
-let channel;
+async function createPDFConsumer(connection) {
+  const channel = await connection.createChannel();
+  
+  await channel.assertQueue('pdf_queue', { durable: true });
+  await channel.assertQueue('pdf-result-queue', { durable: true });
 
-async function consumePDFQueue() {
-  try {
-    console.log('Starting consumePDFQueue...');
-    console.log('Connecting to RabbitMQ...');
-    
-    // Kết nối đến RabbitMQ
-    const connection = await amqp.connect('amqp://localhost');
-    console.log('Connected to RabbitMQ successfully.');
-    
-    // Tạo một kênh mới
-    channel = await connection.createChannel();
-    console.log('Channel created.');
-    
-    // Đảm bảo hàng đợi 'pdf_queue' đã được khai báo
-    await channel.assertQueue('pdf_queue', { durable: true });
-    console.log('Queue "pdf_queue" asserted.');
-
-    // Lắng nghe các tin nhắn từ hàng đợi 'pdf_queue'
-    channel.consume('pdf_queue', (msg) => {
-      if (msg !== null) {
+  channel.consume('pdf_queue', (msg) => {
+    if (msg !== null) {
+      try {
         const { translatedText, imagePath } = JSON.parse(msg.content.toString());
-        console.log(`Creating PDF for: ${translatedText}`);
-    
-        // Tạo PDF từ văn bản dịch
         const pdfFilename = `output-${Date.now()}.pdf`;
+        
         createPDF(translatedText, pdfFilename);
-    
-        console.log(`PDF created: ${pdfFilename}`);
-    
-        // Gửi tên file PDF vào hàng đợi 'pdf-result-queue'
-        sendToQueue('pdf-result-queue', JSON.stringify({ pdfFilename, imagePath }));
-    
-        // Xác nhận tin nhắn đã được xử lý
+
+        channel.sendToQueue('pdf-result-queue', Buffer.from(JSON.stringify({ 
+          pdfFilename, 
+          imagePath 
+        })), { persistent: true });
+
         channel.ack(msg);
+      } catch (error) {
+        console.error(`PDF creation error: ${error}`);
+        channel.nack(msg, false, false);
       }
-    });
-    
+    }
+  }, { 
+    consumerTag: `pdf-consumer-${Math.random().toString(36).substr(2, 9)}` 
+  });
+}
+
+async function startPDFCompetingConsumers() {
+  try {
+    const connection = await amqp.connect('amqp://localhost');
+    console.log("Starting Competing Consumers for PDF Service...");
+
+    const consumers = [];
+    for (let i = 0; i < NUM_CONSUMERS; i++) {
+      consumers.push(createPDFConsumer(connection));
+    }
+
+    await Promise.all(consumers);
+    console.log(`Started ${NUM_CONSUMERS} competing PDF consumers`);
+
   } catch (error) {
-    console.error('Error in consumePDFQueue:', error);
+    console.error('Error in startPDFCompetingConsumers:', error);
   }
 }
 
-consumePDFQueue().catch(console.error);
+startPDFCompetingConsumers().catch(console.error);
