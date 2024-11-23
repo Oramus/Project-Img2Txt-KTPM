@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const amqp = require('amqplib');
 const app = express();
+const Bottleneck = require('bottleneck');
 
 const dataDir = path.resolve(__dirname, '../data');
 const outputDir = path.resolve(__dirname, '../output');
@@ -14,11 +15,17 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir);
 }
 
+
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir);
 }
 
 const upload = multer({ dest: dataDir });
+
+const limiter = new Bottleneck({
+  maxConcurrent: 1,  
+  minTime: 250 
+});
 
 app.get('/', (req, res) => {
   res.send(`
@@ -40,7 +47,9 @@ app.post('/upload', upload.array('images'), async (req, res) => {
   const imagePaths = req.files.map((file) => file.path);
 
   imagePaths.forEach((imagePath) => {
-    sendToQueue('ocr_queue', JSON.stringify({ imagePath }));
+    limiter.schedule(() => {
+      sendToQueue('ocr_queue', JSON.stringify({ imagePath }));
+    });
   });
 
   const connection = await amqp.connect('amqp://localhost');
