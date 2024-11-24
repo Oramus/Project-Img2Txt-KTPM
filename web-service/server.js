@@ -1,7 +1,7 @@
 // web-service/server.js
 const express = require('express');
 const multer = require('multer');
-const { sendToQueue, connect } = require('../rabbitmq');
+const { sendToQueue, connect } = require('../utils/rabbitmq');
 const path = require('path');
 const fs = require('fs');
 const amqp = require('amqplib');

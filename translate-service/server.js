@@ -4,10 +4,22 @@ const translator = require("open-google-translator");
 const CircuitBreaker = require('../utils/circuit-breaker');
 const CacheService = require('../utils/cache');
 
-const NUM_CONSUMERS = 2;
+const NUM_CONSUMERS = 12;
 const cache = new CacheService({
   defaultTTL: 7 * 24 * 3600
 });
+
+async function retryWithBackoff(fn, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      const delay = Math.pow(2, i) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
 
 const translationBreaker = new CircuitBreaker(
   async (text) => {
@@ -23,22 +35,20 @@ const translationBreaker = new CircuitBreaker(
     });
   },
   {
-    failureThreshold: 3,     // Sau 3 lần lỗi sẽ mở circuit
-    resetTimeout: 30000,     // Thời gian reset 30 giây
-    halfOpenSuccess: 2,      // Cần 2 lần success để đóng lại
-    monitorInterval: 5000    // Kiểm tra mỗi 5 giây
+    failureThreshold: 5,
+    resetTimeout: 30000,
+    halfOpenSuccess: 2,
+    monitorInterval: 5000
   }
 );
 
 async function translateText(text) {
   try {
-    // Generate cache key based on input text
     const translationKey = cache.generateKey({ 
       type: 'translation', 
       text: text.trim() 
     });
     
-    // Try to get from cache
     let translatedText = await cache.get(translationKey);
     let isCached = false;
     
@@ -47,10 +57,10 @@ async function translateText(text) {
       isCached = true;
     } else {
       console.log(`[Translation] Cache miss for text length: ${text.length}`);
-      // Perform translation if not in cache
-      translatedText = await translationBreaker.exec(text);
+      translatedText = await retryWithBackoff(async () => {
+        return await translationBreaker.exec(text);
+      });
       
-      // Store result in cache only if translation was successful
       if (translatedText) {
         await cache.set(translationKey, translatedText);
       }
@@ -59,7 +69,7 @@ async function translateText(text) {
     return { translatedText, isCached };
   } catch (error) {
     console.error(`[Translation] Error in translateText: ${error.message}`);
-    throw error; // Re-throw to be handled by the consumer
+    throw error;
   }
 }
 
@@ -68,11 +78,15 @@ async function createTranslateConsumer(connection) {
   
   await channel.assertQueue('translation_queue', { durable: true });
   await channel.assertQueue('pdf_queue', { durable: true });
-  await channel.assertQueue('error_queue', { durable: true });
+  await channel.assertQueue('translation_error_queue', { durable: true });
+  await channel.assertQueue('translation_dlq', { durable: true });
+
+  channel.prefetch(1);
 
   channel.consume('translation_queue', async (msg) => {
     if (msg !== null) {
       const startTime = Date.now();
+      console.log(`[Translation] Starting processing at ${new Date().toISOString()}`);
       
       try {
         const { text, imagePath } = JSON.parse(msg.content.toString());
@@ -80,28 +94,30 @@ async function createTranslateConsumer(connection) {
 
         try {
           const { translatedText, isCached } = await translateText(text);
+          const processingTime = Date.now() - startTime;
           
           if (!translatedText) {
             throw new Error('Translation failed to produce text');
           }
 
-          channel.sendToQueue('pdf_queue', Buffer.from(JSON.stringify({ 
-            translatedText, 
-            imagePath 
-          })), { 
-            persistent: true,
-            headers: {
-              processingTime: Date.now() - startTime,
-              timestamp: new Date().toISOString(),
-              cached: isCached
+          channel.sendToQueue('pdf_queue', 
+            Buffer.from(JSON.stringify({ translatedText, imagePath })), 
+            { 
+              persistent: true,
+              headers: {
+                processingTime,
+                timestamp: new Date().toISOString(),
+                cached: isCached
+              }
             }
-          });
+          );
 
           channel.ack(msg);
           
         } catch (circuitError) {
           if (translationBreaker.getState() === 'OPEN') {
-            channel.sendToQueue('error_queue', msg.content, {
+            console.log('[Translation] Circuit Breaker OPEN, sending to error queue');
+            channel.sendToQueue('translation_error_queue', msg.content, {
               persistent: true,
               headers: { 
                 error: 'Circuit Breaker OPEN',
@@ -113,11 +129,13 @@ async function createTranslateConsumer(connection) {
           }
           throw circuitError;
         }
+
       } catch (error) {
-        console.error(`Translation error: ${error}`);
+        console.error(`[Translation] Error processing text: ${error.message}`);
         
         if (msg.fields.redelivered) {
-          channel.sendToQueue('error_queue', msg.content, {
+          console.log('[Translation] Message failed after retry, moving to DLQ');
+          channel.sendToQueue('translation_dlq', msg.content, {
             persistent: true,
             headers: { 
               error: error.message,
@@ -127,6 +145,7 @@ async function createTranslateConsumer(connection) {
           });
           channel.ack(msg);
         } else {
+          console.log('[Translation] First failure, retrying message');
           channel.nack(msg, false, true);
         }
       }
@@ -136,37 +155,47 @@ async function createTranslateConsumer(connection) {
   });
 }
 
-async function startTranslateCompetingConsumers() {
-  try {
-    const connection = await amqp.connect('amqp://localhost');
-    console.log("Starting Competing Consumers for Translation Service...");
-
-    const consumers = [];
-    for (let i = 0; i < NUM_CONSUMERS; i++) {
-      consumers.push(createTranslateConsumer(connection));
-    }
-
-    await Promise.all(consumers);
-    console.log(`Started ${NUM_CONSUMERS} competing translation consumers`);
-
-  } catch (error) {
-    console.error('Error in startTranslateCompetingConsumers:', error);
-  }
-}
-
 async function handleErrorQueue(connection) {
   const channel = await connection.createChannel();
-  await channel.assertQueue('error_queue', { durable: true });
+  await channel.assertQueue('translation_error_queue', { durable: true });
 
-  channel.consume('error_queue', async (msg) => {
+  channel.consume('translation_error_queue', async (msg) => {
     if (msg !== null) {
       const content = JSON.parse(msg.content.toString());
       const error = msg.properties.headers.error;
       
-      console.log(`Processing error queue message:`, {
+      console.log(`[Translation Error Queue] Processing message:`, {
         content,
         error,
         timestamp: new Date().toISOString()
+      });
+
+      if (translationBreaker.getState() === 'CLOSED') {
+        channel.sendToQueue('translation_queue', msg.content, {
+          persistent: true,
+          headers: { retriedFrom: 'error_queue' }
+        });
+      }
+
+      channel.ack(msg);
+    }
+  });
+}
+
+async function handleDLQ(connection) {
+  const channel = await connection.createChannel();
+  await channel.assertQueue('translation_dlq', { durable: true });
+
+  channel.consume('translation_dlq', async (msg) => {
+    if (msg !== null) {
+      const content = JSON.parse(msg.content.toString());
+      const headers = msg.properties.headers;
+      
+      console.log(`[Translation DLQ] Permanently failed message:`, {
+        content,
+        error: headers.error,
+        timestamp: headers.timestamp,
+        processingTime: headers.processingTime
       });
 
       channel.ack(msg);
@@ -175,9 +204,25 @@ async function handleErrorQueue(connection) {
 }
 
 async function start() {
-  const connection = await amqp.connect('amqp://localhost');
-  await startTranslateCompetingConsumers();
-  await handleErrorQueue(connection);
+  try {
+    const connection = await amqp.connect('amqp://localhost');
+    console.log("Starting Translation Service with Circuit Breaker...");
+
+    const consumers = [];
+    for (let i = 0; i < NUM_CONSUMERS; i++) {
+      consumers.push(createTranslateConsumer(connection));
+    }
+
+    await handleErrorQueue(connection);
+    await handleDLQ(connection);
+
+    await Promise.all(consumers);
+    console.log(`Started ${NUM_CONSUMERS} competing translation consumers with Circuit Breaker`);
+
+  } catch (error) {
+    console.error('Error starting Translation service:', error);
+    process.exit(1);
+  }
 }
 
 start().catch(console.error);

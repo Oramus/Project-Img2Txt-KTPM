@@ -10,7 +10,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "amqplib": "^0.10.4",
+    "amqplib": "^0.10.5",
+    "bottleneck": "^2.19.5",
     "bull": "^4.16.4",
     "express": "^4.21.1",
     "fs": "^0.0.1-security",

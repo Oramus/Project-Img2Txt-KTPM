@@ -7,7 +7,7 @@ const CircuitBreaker = require('../utils/circuit-breaker');
 const CacheService = require('../utils/cache');
 
 const dataDir = path.resolve(__dirname, '../data');
-const NUM_CONSUMERS = 3;
+const NUM_CONSUMERS = 12;
 
 const cache = new CacheService({
   defaultTTL: 7 * 24 * 3600
@@ -22,10 +22,10 @@ const ocrBreaker = new CircuitBreaker(
     });
   },
   {
-    failureThreshold: 3,     // Mở circuit sau 3 lần lỗi
-    resetTimeout: 20000,     // Reset sau 20 giây
-    halfOpenSuccess: 2,      // Cần 2 lần success để đóng lại
-    monitorInterval: 5000    // Kiểm tra mỗi 5 giây
+    failureThreshold: 5,     // Số lần lỗi tối đa trước khi mở circuit
+    resetTimeout: 20000,     // Thời gian chờ trước khi thử lại (ms)  
+    halfOpenSuccess: 2,      // Số lần success cần để đóng lại circuit
+    monitorInterval: 5000    // Chu kỳ kiểm tra trạng thái (ms)
   }
 );
 
@@ -36,7 +36,7 @@ async function retryWithBackoff(fn, maxRetries = 3) {
       return await fn();
     } catch (error) {
       if (i === maxRetries - 1) throw error;
-      const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
+      const delay = Math.pow(2, i) * 1000;
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -44,14 +44,12 @@ async function retryWithBackoff(fn, maxRetries = 3) {
 
 async function processImage(imagePath) {
   try {
-    // Generate cache key based on image content hash
     const imageBuffer = fs.readFileSync(imagePath);
     const imageKey = cache.generateKey({ 
       type: 'ocr', 
       content: imageBuffer 
     });
     
-    // Try to get from cache
     let text = await cache.get(imageKey);
     let isCached = false;
     
@@ -60,12 +58,10 @@ async function processImage(imagePath) {
       isCached = true;
     } else {
       console.log(`[OCR] Cache miss for ${imagePath}`);
-      // Perform OCR if not in cache
       text = await retryWithBackoff(async () => {
         return await ocrBreaker.exec(imagePath);
       });
       
-      // Store result in cache only if OCR was successful
       if (text) {
         await cache.set(imageKey, text);
       }
@@ -74,7 +70,7 @@ async function processImage(imagePath) {
     return { text, isCached };
   } catch (error) {
     console.error(`[OCR] Error in processImage: ${error.message}`);
-    throw error; // Re-throw to be handled by the consumer
+    throw error;
   }
 }
 
